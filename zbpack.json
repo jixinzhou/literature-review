@@ -1,5 +1,6 @@
 {
   "python": {
     "entry": "app.py"
-  }
+  },
+  "start_command": "gunicorn -c gunicorn.conf.py app:app"
 }
