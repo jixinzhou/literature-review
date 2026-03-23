@@ -1,0 +1,5 @@
+.env
+.env.local
+openalex_inspect.json
+*.pyc
+__pycache__/
