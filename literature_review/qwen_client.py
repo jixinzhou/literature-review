@@ -21,6 +21,8 @@ def chat_completion(
     user_prompt: str,
     temperature: float = 0.2,
     timeout: float = 300.0,
+    *,
+    extra_body: dict[str, Any] | None = None,
 ) -> str:
     """OpenAI 兼容 Chat Completions。综述生成耗时长，默认 300 秒超时。含 TLS 断开重试。"""
     url = f"{settings.qwen_base_url}/chat/completions"
@@ -36,6 +38,8 @@ def chat_completion(
         ],
         "temperature": temperature,
     }
+    if extra_body:
+        body.update(extra_body)
     _TLS_EXC = (
         httpx.RemoteProtocolError,
         httpx.ConnectError,

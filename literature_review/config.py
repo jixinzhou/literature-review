@@ -30,8 +30,8 @@ class Settings:
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_intent_model: str = "qwen-plus"
     qwen_writing_model: str = "qwen-plus"
-    #: 文献标题/摘要中译模型（可与意图模型分开以节省成本）
-    qwen_translate_model: str = "qwen-turbo"
+    #: 文献标题/摘要中译：建议 qwen-flash / qwen-turbo（快、非思考链）；勿用 qwen-max 等做批量翻译
+    qwen_translate_model: str = "qwen-flash"
     openalex_email: str | None = None
     openalex_base_url: str = "https://api.openalex.org"
     #: 英文候选池目标条数（用于 OpenAlex 聚合后再排序取 TOP_K_EN）
@@ -58,7 +58,7 @@ def load_settings() -> Settings:
         qwen_base_url=os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").rstrip("/"),
         qwen_intent_model=os.getenv("QWEN_INTENT_MODEL", "qwen-plus"),
         qwen_writing_model=os.getenv("QWEN_WRITING_MODEL", "qwen-plus"),
-        qwen_translate_model=os.getenv("QWEN_TRANSLATE_MODEL", "qwen-turbo"),
+        qwen_translate_model=os.getenv("QWEN_TRANSLATE_MODEL", "qwen-flash"),
         openalex_email=email,
         openalex_base_url=os.getenv("OPENALEX_BASE_URL", "https://api.openalex.org").rstrip("/"),
         fetch_pool_size=int(os.getenv("FETCH_POOL_SIZE", "50")),

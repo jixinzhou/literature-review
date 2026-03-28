@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any
 
@@ -30,6 +31,17 @@ def _needs_translation(title: str, abstract: str) -> bool:
     # 标题与摘要整体偏中文则不再译
     combined = f"{t}\n{a}"
     return _cjk_ratio(combined) < 0.35
+
+
+def _translate_extra_body() -> dict[str, Any]:
+    """
+    关闭思考链以加速直出（仅部分 DashScope 模型支持）。
+    默认不发送；若需开启可设 QWEN_TRANSLATE_DISABLE_THINKING=true。
+    若接口报错，请保持默认或改回 false。
+    """
+    if os.getenv("QWEN_TRANSLATE_DISABLE_THINKING", "").lower() in ("1", "true", "yes"):
+        return {"enable_thinking": False}
+    return {}
 
 
 def _chunk_items(items: list[dict[str, Any]], max_per_chunk: int = 4) -> list[list[dict[str, Any]]]:
@@ -81,7 +93,8 @@ def translate_works_to_zh(settings: Settings, works: list[dict[str, Any]]) -> di
                 TRANSLATE_SYSTEM_PROMPT,
                 user_prompt,
                 temperature=0.15,
-                timeout=120.0,
+                timeout=90.0,
+                extra_body=_translate_extra_body(),
             )
             parsed = parse_json_strict(text)
             if isinstance(parsed, list):

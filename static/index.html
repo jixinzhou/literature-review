@@ -289,6 +289,7 @@
       <div class="lang-row" id="langRow">
         <button type="button" id="btnLangToggle" class="btn btn-secondary btn-sm">显示原文</button>
         <span class="hint">默认显示中文译文；撰写综述仍使用英文原文以保证引用一致</span>
+        <span id="translateHint" class="hint hidden">正在翻译中文译文…</span>
       </div>
       <div id="topicBadge" class="topic-badge hidden"></div>
       <div class="step2-layout">
@@ -479,6 +480,39 @@
       return div.innerHTML;
     }
 
+    async function fetchTranslationsBackground() {
+      const hint = document.getElementById('translateHint');
+      if (hint) hint.classList.remove('hidden');
+      try {
+        const res = await fetch(`${API}/translate`, {
+          method: 'POST',
+          headers: apiJsonHeaders(),
+          credentials: 'same-origin',
+          body: JSON.stringify({ works, candidates }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '翻译失败');
+        const t = data.translations || {};
+        function applyZh(arr) {
+          for (const w of arr) {
+            const oid = w.openalex_id;
+            if (oid && t[oid]) {
+              w.title_zh = t[oid].title_zh || '';
+              w.abstract_zh = t[oid].abstract_zh || '';
+            }
+          }
+        }
+        applyZh(works);
+        applyZh(candidates);
+        refreshStep2();
+        if (document.getElementById('drawerOverlay').classList.contains('open')) refreshDrawer();
+      } catch (e) {
+        console.warn(e);
+      } finally {
+        if (hint) hint.classList.add('hidden');
+      }
+    }
+
     async function search() {
       const desc = document.getElementById('desc').value.trim();
       if (!desc) { setError('err1', '请输入研究描述'); return; }
@@ -494,10 +528,7 @@
           method: 'POST',
           headers: apiJsonHeaders(),
           credentials: 'same-origin',
-          body: JSON.stringify({
-            description: desc,
-            translate_literature: true,
-          }),
+          body: JSON.stringify({ description: desc }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || data.detail || '检索失败');
@@ -514,6 +545,7 @@
         refreshStep2();
         document.getElementById('btnAddMore').classList.toggle('hidden', candidates.length === 0);
         show('step2');
+        void fetchTranslationsBackground();
       } catch (e) {
         setError('err1', e.message);
       } finally {

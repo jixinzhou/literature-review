@@ -24,7 +24,7 @@ from literature_review.pipeline import (
     run_writing_step,
     select_top_en_only,
 )
-from literature_review.translate import apply_zh_fields, translate_works_to_zh
+from literature_review.translate import translate_works_to_zh
 
 app = Flask(__name__, static_folder="static")
 PROJECT_ROOT = _PROJECT_ROOT
@@ -158,25 +158,42 @@ def api_search():
         result = select_top_en_only(settings, intent, return_candidates=15)
         works, candidates = result
 
-        translate_on = data.get("translate_literature", True)
-        if translate_on:
-            seen: set[str] = set()
-            unique: list[dict] = []
-            for w in works + candidates:
-                oid = (w.get("openalex_id") or "").strip()
-                if not oid or oid in seen:
-                    continue
-                seen.add(oid)
-                unique.append(w)
-            zh_map = translate_works_to_zh(settings, unique)
-            apply_zh_fields(works, zh_map)
-            apply_zh_fields(candidates, zh_map)
-
         return jsonify({
             "research_topic": research_topic,
             "works": [_serialize_work(w) for w in works],
             "candidates": [_serialize_work(w) for w in candidates],
         })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/translate", methods=["POST"])
+def api_translate():
+    """异步翻译：检索返回后再调用，不阻塞 /api/search。"""
+    denied = _require_beta_access()
+    if denied is not None:
+        return denied
+    data = request.get_json(silent=True) or {}
+    raw_works = data.get("works") or []
+    raw_candidates = data.get("candidates") or []
+    if not raw_works and not raw_candidates:
+        return jsonify({"error": "请提供 works 或 candidates"}), 400
+
+    seen: set[str] = set()
+    unique: list[dict] = []
+    for w in raw_works + raw_candidates:
+        if not isinstance(w, dict):
+            continue
+        oid = (w.get("openalex_id") or "").strip()
+        if not oid or oid in seen:
+            continue
+        seen.add(oid)
+        unique.append(dict(w))
+
+    try:
+        settings = load_settings()
+        zh_map = translate_works_to_zh(settings, unique)
+        return jsonify({"translations": zh_map})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
