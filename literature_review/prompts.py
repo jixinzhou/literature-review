@@ -119,3 +119,12 @@ def build_writing_user_prompt(
 
 {literature_block.strip()}
 """
+
+
+TRANSLATE_SYSTEM_PROMPT = """# Role
+你是学术文献翻译助手，将英文标题与摘要译为**简体中文**。
+
+# Rules
+- 译文准确、通顺，符合中文学术写作习惯；专有名词、模型名、数据集名可保留英文或常见译法。
+- 不要添加原文没有的评论或解释。
+- 必须严格按用户要求的 JSON 结构输出，不要 Markdown 说明。"""

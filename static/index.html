@@ -66,6 +66,20 @@
       box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
     }
     textarea::placeholder { color: var(--text-secondary); opacity: 0.7; }
+    input[type="password"] {
+      width: 100%;
+      padding: 14px 16px;
+      font-size: 1rem;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    input[type="password"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
+    }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -236,6 +250,26 @@
     }
     .step2-toolbar .btn-primary { background: var(--accent); color: white; }
     .step2-toolbar .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+    .lang-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .lang-row .hint { font-size: 0.8125rem; color: var(--text-secondary); }
+    .chk-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+    .chk-inline input { width: auto; margin: 0; cursor: pointer; }
+
     @media (max-width: 640px) {
       .step2-layout { flex-direction: column; }
       .step2-toolbar {
@@ -261,7 +295,13 @@
 
     <section id="step1" class="card">
       <p class="step-indicator">步骤 1 / 2 — 输入研究描述</p>
-      <label for="desc">描述你的研究主题（一段话即可）</label>
+      <label for="betaToken">内测口令</label>
+      <input type="password" id="betaToken" name="betaToken" autocomplete="current-password" placeholder="与服务器 BETA_ACCESS_TOKEN 一致；未配置时可留空" />
+      <label class="chk-inline" for="chkTranslateLiterature">
+        <input type="checkbox" id="chkTranslateLiterature" checked />
+        <span>检索后将英文标题与摘要译为中文显示（推荐，略增加等待时间）</span>
+      </label>
+      <label for="desc" style="margin-top:0">描述你的研究主题（一段话即可）</label>
       <textarea id="desc" placeholder="例如：基于群体智能算法的移动机器人路径规划，采用改进蚁群算法在栅格环境中进行避障与最优路径搜索"></textarea>
       <div class="actions">
         <button id="btnSearch" class="btn">开始检索</button>
@@ -271,6 +311,10 @@
 
     <section id="step2" class="card hidden">
       <p class="step-indicator">步骤 2 / 2 — 确认文献</p>
+      <div class="lang-row" id="langRow">
+        <button type="button" id="btnLangToggle" class="btn btn-secondary btn-sm">显示原文</button>
+        <span class="hint">默认显示中文译文；撰写综述仍使用英文原文以保证引用一致</span>
+      </div>
       <div id="topicBadge" class="topic-badge hidden"></div>
       <div class="step2-layout">
         <div class="step2-main">
@@ -316,12 +360,39 @@
 
   <script>
     const API = '/api';
+    const BETA_STORAGE_KEY = 'literature_beta_access_token';
     let researchTopic = '';
     let works = [];
     let candidates = [];
 
+    (function initBetaToken() {
+      const el = document.getElementById('betaToken');
+      if (!el) return;
+      const saved = sessionStorage.getItem(BETA_STORAGE_KEY);
+      if (saved) el.value = saved;
+      el.addEventListener('input', () => {
+        sessionStorage.setItem(BETA_STORAGE_KEY, el.value);
+      });
+    })();
+
+    function apiJsonHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      const t = (document.getElementById('betaToken')?.value || '').trim();
+      if (t) headers['X-Beta-Access-Token'] = t;
+      return headers;
+    }
+
     const ABSTRACT_PREVIEW = 120;
-    function displayTitle(w) { return w.title || '(无标题)'; }
+    let showZh = true;
+
+    function shownTitle(w) {
+      if (showZh && (w.title_zh || '').trim()) return w.title_zh.trim();
+      return (w.title || '(无标题)');
+    }
+    function shownAbstract(w) {
+      if (showZh && (w.abstract_zh || '').trim()) return w.abstract_zh || '';
+      return w.abstract || '';
+    }
     function formatAbstract(abstract, id) {
       const text = abstract || '';
       if (!text) return escapeHtml('（无摘要）');
@@ -350,11 +421,11 @@
         const removeBtn = onRemove ? `<button class="btn btn-secondary btn-sm" data-i="${i}" data-action="remove">移除</button>` : '';
         const addBtn = onAdd ? `<button class="btn btn-ghost btn-sm" data-i="${i}" data-action="add">添加</button>` : '';
         const aid = (w.openalex_id || `lit-${i}`).replace(/[^a-z0-9-]/gi, '_');
-        const abstractHtml = formatAbstract(w.abstract, aid);
+        const abstractHtml = formatAbstract(shownAbstract(w), aid);
         return `
           <div class="lit-item" data-id="${escapeHtml(w.openalex_id || i)}">
             <div class="content">
-              <h4>${escapeHtml(displayTitle(w))}</h4>
+              <h4>${escapeHtml(shownTitle(w))}</h4>
               <div class="lit-meta">${w.publication_year || ''} · 被引 ${w.cited_by_count ?? 0}</div>
               <div class="lit-abstract" data-aid="${aid}">${abstractHtml}</div>
             </div>
@@ -446,8 +517,11 @@
       try {
         const res = await fetch(`${API}/search`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ description: desc }),
+          headers: apiJsonHeaders(),
+          body: JSON.stringify({
+            description: desc,
+            translate_literature: document.getElementById('chkTranslateLiterature').checked,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || data.detail || '检索失败');
@@ -458,6 +532,9 @@
 
         document.getElementById('topicBadge').textContent = researchTopic;
         document.getElementById('topicBadge').classList.remove('hidden');
+        showZh = true;
+        const btnLang = document.getElementById('btnLangToggle');
+        if (btnLang) btnLang.textContent = '显示原文';
         refreshStep2();
         document.getElementById('btnAddMore').classList.toggle('hidden', candidates.length === 0);
         show('step2');
@@ -480,7 +557,7 @@
       try {
         const res = await fetch(`${API}/generate`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: apiJsonHeaders(),
           body: JSON.stringify({ research_title: researchTopic, works }),
         });
         const data = await res.json();
@@ -499,11 +576,22 @@
     document.getElementById('btnGenerate').addEventListener('click', generate);
     document.getElementById('btnAddMore').addEventListener('click', openDrawer);
     document.getElementById('btnBack').addEventListener('click', () => show('step1'));
+    document.getElementById('btnLangToggle').addEventListener('click', () => {
+      showZh = !showZh;
+      const btn = document.getElementById('btnLangToggle');
+      if (btn) btn.textContent = showZh ? '显示原文' : '显示中文';
+      refreshStep2();
+      if (document.getElementById('drawerOverlay').classList.contains('open')) refreshDrawer();
+    });
+
     document.getElementById('btnNew').addEventListener('click', () => {
       works = [];
       candidates = [];
       researchTopic = '';
       document.getElementById('desc').value = '';
+      showZh = true;
+      const btnLang = document.getElementById('btnLangToggle');
+      if (btnLang) btnLang.textContent = '显示原文';
       show('step1');
     });
     document.getElementById('btnCopy').addEventListener('click', () => {
