@@ -66,20 +66,6 @@
       box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
     }
     textarea::placeholder { color: var(--text-secondary); opacity: 0.7; }
-    input[type="password"] {
-      width: 100%;
-      padding: 14px 16px;
-      font-size: 1rem;
-      font-family: inherit;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    input[type="password"]:focus {
-      outline: none;
-      border-color: var(--accent);
-      box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
-    }
     .btn {
       display: inline-flex;
       align-items: center;
@@ -258,17 +244,12 @@
       margin-bottom: 16px;
     }
     .lang-row .hint { font-size: 0.8125rem; color: var(--text-secondary); }
-    .chk-inline {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 16px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      color: var(--text-secondary);
-      user-select: none;
+    .link-btn {
+      background: none; border: none; color: var(--text-secondary);
+      font-size: inherit; cursor: pointer; text-decoration: underline;
+      padding: 0; font-family: inherit;
     }
-    .chk-inline input { width: auto; margin: 0; cursor: pointer; }
+    .link-btn:hover { color: var(--accent); }
 
     @media (max-width: 640px) {
       .step2-layout { flex-direction: column; }
@@ -295,13 +276,7 @@
 
     <section id="step1" class="card">
       <p class="step-indicator">步骤 1 / 2 — 输入研究描述</p>
-      <label for="betaToken">内测口令</label>
-      <input type="password" id="betaToken" name="betaToken" autocomplete="current-password" placeholder="与服务器 BETA_ACCESS_TOKEN 一致；未配置时可留空" />
-      <label class="chk-inline" for="chkTranslateLiterature">
-        <input type="checkbox" id="chkTranslateLiterature" checked />
-        <span>检索后将英文标题与摘要译为中文显示（推荐，略增加等待时间）</span>
-      </label>
-      <label for="desc" style="margin-top:0">描述你的研究主题（一段话即可）</label>
+      <label for="desc">描述你的研究主题（一段话即可）</label>
       <textarea id="desc" placeholder="例如：基于群体智能算法的移动机器人路径规划，采用改进蚁群算法在栅格环境中进行避障与最优路径搜索"></textarea>
       <div class="actions">
         <button id="btnSearch" class="btn">开始检索</button>
@@ -356,31 +331,31 @@
     </div>
   </div>
 
-  <footer>意图理解 · OpenAlex 检索 · 通义千问生成</footer>
+  <footer>
+    <div>意图理解 · OpenAlex 检索 · 通义千问生成</div>
+    <div style="margin-top:12px">
+      <button type="button" id="btnLogout" class="link-btn" style="display:none">退出内测</button>
+    </div>
+  </footer>
 
   <script>
     const API = '/api';
-    const BETA_STORAGE_KEY = 'literature_beta_access_token';
     let researchTopic = '';
     let works = [];
     let candidates = [];
 
-    (function initBetaToken() {
-      const el = document.getElementById('betaToken');
-      if (!el) return;
-      const saved = sessionStorage.getItem(BETA_STORAGE_KEY);
-      if (saved) el.value = saved;
-      el.addEventListener('input', () => {
-        sessionStorage.setItem(BETA_STORAGE_KEY, el.value);
-      });
-    })();
-
     function apiJsonHeaders() {
-      const headers = { 'Content-Type': 'application/json' };
-      const t = (document.getElementById('betaToken')?.value || '').trim();
-      if (t) headers['X-Beta-Access-Token'] = t;
-      return headers;
+      return { 'Content-Type': 'application/json' };
     }
+
+    (async function initAuthUi() {
+      try {
+        const r = await fetch(`${API}/auth/status`, { credentials: 'same-origin' });
+        const d = await r.json();
+        const btn = document.getElementById('btnLogout');
+        if (btn && d.require_beta) btn.style.display = 'inline';
+      } catch (_) { /* ignore */ }
+    })();
 
     const ABSTRACT_PREVIEW = 120;
     let showZh = true;
@@ -518,9 +493,10 @@
         const res = await fetch(`${API}/search`, {
           method: 'POST',
           headers: apiJsonHeaders(),
+          credentials: 'same-origin',
           body: JSON.stringify({
             description: desc,
-            translate_literature: document.getElementById('chkTranslateLiterature').checked,
+            translate_literature: true,
           }),
         });
         const data = await res.json();
@@ -558,6 +534,7 @@
         const res = await fetch(`${API}/generate`, {
           method: 'POST',
           headers: apiJsonHeaders(),
+          credentials: 'same-origin',
           body: JSON.stringify({ research_title: researchTopic, works }),
         });
         const data = await res.json();
@@ -609,6 +586,13 @@
     });
     document.getElementById('btnDrawerDone').addEventListener('click', closeDrawer);
     document.getElementById('btnDrawerClose').addEventListener('click', closeDrawer);
+
+    document.getElementById('btnLogout').addEventListener('click', async () => {
+      try {
+        await fetch(`${API}/auth/logout`, { method: 'POST', credentials: 'same-origin' });
+      } catch (_) { /* ignore */ }
+      window.location.href = '/';
+    });
   </script>
 </body>
 </html>

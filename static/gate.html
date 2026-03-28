@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>内测访问 · 国内外研究现状</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #fbfbfd;
+      --surface: #ffffff;
+      --text: #1d1d1f;
+      --text-secondary: #86868b;
+      --accent: #0071e3;
+      --accent-hover: #0077ed;
+      --border: rgba(0,0,0,0.08);
+      --shadow: 0 4px 24px rgba(0,0,0,0.06);
+      --radius: 12px;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 40px 36px;
+      max-width: 400px;
+      width: 100%;
+    }
+    h1 { font-size: 1.5rem; font-weight: 600; margin-bottom: 8px; text-align: center; }
+    .subtitle { font-size: 0.9rem; color: var(--text-secondary); text-align: center; margin-bottom: 28px; }
+    label { display: block; font-size: 0.875rem; font-weight: 500; color: var(--text-secondary); margin-bottom: 8px; }
+    input[type="password"] {
+      width: 100%;
+      padding: 14px 16px;
+      font-size: 1rem;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    input[type="password"]:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0,113,227,0.15);
+    }
+    .btn {
+      width: 100%;
+      margin-top: 20px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 500;
+      font-family: inherit;
+      color: white;
+      background: var(--accent);
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+    .btn:hover:not(:disabled) { background: var(--accent-hover); }
+    .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error-msg {
+      margin-top: 16px;
+      padding: 12px 14px;
+      background: #fff5f5;
+      color: #c53030;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>内测访问</h1>
+    <p class="subtitle">请输入内测码后继续</p>
+    <label for="gateCode">内测码</label>
+    <input type="password" id="gateCode" name="gateCode" autocomplete="current-password" placeholder="请联系管理员获取" />
+    <button type="button" id="btnEnter" class="btn">进入</button>
+    <div id="gateErr" class="error-msg"></div>
+  </div>
+  <script>
+    const API = '/api';
+    function showErr(msg) {
+      const el = document.getElementById('gateErr');
+      el.textContent = msg || '';
+      el.classList.toggle('show', !!msg);
+    }
+    async function submit() {
+      const code = document.getElementById('gateCode').value.trim();
+      if (!code) { showErr('请输入内测码'); return; }
+      showErr('');
+      const btn = document.getElementById('btnEnter');
+      btn.disabled = true;
+      try {
+        const res = await fetch(`${API}/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ code }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          window.location.href = '/';
+          return;
+        }
+        showErr(data.error || '内测码错误');
+      } catch (e) {
+        showErr('网络错误，请重试');
+      } finally {
+        btn.disabled = false;
+      }
+    }
+    document.getElementById('btnEnter').addEventListener('click', submit);
+    document.getElementById('gateCode').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+  </script>
+</body>
+</html>

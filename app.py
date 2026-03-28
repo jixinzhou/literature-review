@@ -9,7 +9,13 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, request, send_from_directory, session
+
+# 先于 Flask 读取密钥：确保本地 .env 中的 BETA_ACCESS_TOKEN 生效
+_PROJECT_ROOT = Path(__file__).resolve().parent
+load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv()
 
 from literature_review.config import load_settings
 from literature_review.pipeline import (
@@ -21,11 +27,18 @@ from literature_review.pipeline import (
 from literature_review.translate import apply_zh_fields, translate_works_to_zh
 
 app = Flask(__name__, static_folder="static")
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = _PROJECT_ROOT
+
+# 会话签名：生产环境请设置 FLASK_SECRET_KEY（可与 BETA_ACCESS_TOKEN 不同）
+app.secret_key = (
+    (os.environ.get("FLASK_SECRET_KEY") or "").strip()
+    or (os.environ.get("BETA_ACCESS_TOKEN") or "").strip()
+    or "literature-review-dev-only-secret"
+)
 
 
 def _beta_token_expected() -> str:
-    """非空时，/api/search 与 /api/generate 需携带相同口令（见 _require_beta_access）。"""
+    """非空时须先通过内测页登录（会话）或请求头携带相同口令（脚本/调试）。"""
     return (os.environ.get("BETA_ACCESS_TOKEN") or "").strip()
 
 
@@ -36,13 +49,29 @@ def _token_from_request() -> str:
     return (request.headers.get("X-Beta-Access-Token") or "").strip()
 
 
+def _session_beta_ok() -> bool:
+    return bool(session.get("beta_ok"))
+
+
 def _require_beta_access():
-    """若配置了 BETA_ACCESS_TOKEN，则校验请求头；未配置则不校验（便于本地开发）。"""
+    """配置了 BETA_ACCESS_TOKEN 时：须已登录会话，或请求头携带正确口令。"""
     expected = _beta_token_expected()
     if not expected:
         return None
-    if _token_from_request() != expected:
-        return jsonify({"error": "内测口令未提供或错误"}), 401
+    if _session_beta_ok():
+        return None
+    if _token_from_request() == expected:
+        return None
+    return jsonify({"error": "请先输入内测码访问本站，或内测口令错误"}), 401
+
+
+@app.before_request
+def _guard_static_index():
+    """禁止绕过门禁直接打开 /static/index.html。"""
+    if not _beta_token_expected() or _session_beta_ok():
+        return None
+    if request.path == "/static/index.html":
+        return redirect("/")
     return None
 
 
@@ -77,7 +106,38 @@ def _deserialize_work(w: dict) -> dict:
 
 @app.route("/")
 def index():
+    if _beta_token_expected() and not _session_beta_ok():
+        return send_from_directory(app.static_folder, "gate.html")
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_auth_login():
+    """提交内测码，通过后写入会话 Cookie。"""
+    expected = _beta_token_expected()
+    if not expected:
+        return jsonify({"ok": True, "message": "未启用内测门禁"}), 200
+    data = request.get_json(silent=True) or {}
+    code = (data.get("code") or "").strip()
+    if code != expected:
+        return jsonify({"ok": False, "error": "内测码错误"}), 401
+    session["beta_ok"] = True
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_auth_logout():
+    session.pop("beta_ok", None)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/auth/status", methods=["GET"])
+def api_auth_status():
+    exp = _beta_token_expected()
+    return jsonify({
+        "require_beta": bool(exp),
+        "logged_in": _session_beta_ok() if exp else True,
+    })
 
 
 @app.route("/api/search", methods=["POST"])
@@ -145,6 +205,12 @@ def api_generate():
 
 
 def main():
+    if not (os.environ.get("BETA_ACCESS_TOKEN") or "").strip():
+        print(
+            "[literature-review] 未设置 BETA_ACCESS_TOKEN：不会显示内测页，将直接进入主界面。\n"
+            "  本地测试内测门禁：在 .env 中增加一行 BETA_ACCESS_TOKEN=你的内测码 后重启 python app.py",
+            flush=True,
+        )
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
     # 云端部署（Zeabur 等会设置 PORT）需 host=0.0.0.0 以监听所有接口
