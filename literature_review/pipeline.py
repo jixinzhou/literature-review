@@ -6,7 +6,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from literature_review.config import Settings, load_settings, project_root
+from literature_review.config import (
+    Settings,
+    ensure_qwen_configured,
+    load_settings,
+    project_root,
+)
 from literature_review.openalex_client import (
     normalize_work,
     search_works_gather,
@@ -391,6 +396,7 @@ def run_full_pipeline(
     仅使用英文文献（OpenAlex 中文检索效果不佳已去除）。
     """
     cfg = settings or load_settings()
+    ensure_qwen_configured(cfg)
     intent = run_intent_step(cfg, user_description)
     resolved_title = resolve_research_title(intent, research_title)
     print(f"\n【研究主题】{resolved_title}\n")
@@ -467,6 +473,7 @@ def main_cli(argv: list[str] | None = None) -> int:
     if args.inspect_openalex:
         try:
             cfg = load_settings()
+            ensure_qwen_configured(cfg)
             intent = run_intent_step(cfg, desc)
             payload = inspect_openalex_debug(cfg, intent)
             out_path = write_openalex_inspect_json(payload)

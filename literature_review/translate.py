@@ -1,18 +1,15 @@
-"""英文文献标题与摘要译为简体中文（通义千问），供前端展示；撰写综述仍使用原文。"""
+"""英文文献标题与摘要译为简体中文（火山引擎 TranslateText），供前端展示；撰写综述仍使用原文。"""
 from __future__ import annotations
 
 import logging
-import os
 import re
-from typing import Any
+from typing import Any, Iterator
 
-from literature_review.config import Settings
-from literature_review.prompts import TRANSLATE_SYSTEM_PROMPT
-from literature_review.qwen_client import chat_completion, parse_json_strict
+from literature_review.config import Settings, VolcTranslateNotConfiguredError
+from literature_review.volc_translate import translate_text_list
 
 logger = logging.getLogger(__name__)
 
-# 粗略判断：已有较多中文时跳过机器翻译，避免重复加工
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 
@@ -28,26 +25,38 @@ def _needs_translation(title: str, abstract: str) -> bool:
     a = (abstract or "").strip()
     if not t and not a:
         return False
-    # 标题与摘要整体偏中文则不再译
     combined = f"{t}\n{a}"
     return _cjk_ratio(combined) < 0.35
 
 
-def _translate_extra_body() -> dict[str, Any]:
+def _iter_text_batches(
+    items: list[dict[str, Any]], field: str
+) -> Iterator[tuple[list[str], list[str]]]:
     """
-    关闭思考链以加速直出（仅部分 DashScope 模型支持）。
-    默认不发送；若需开启可设 QWEN_TRANSLATE_DISABLE_THINKING=true。
-    若接口报错，请保持默认或改回 false。
+    按火山限制切批：每批 TextList 最多 16 条，总字符不超过 5000。
+    产出 (openalex_id 列表, 与之一一对应的文本列表)。
     """
-    if os.getenv("QWEN_TRANSLATE_DISABLE_THINKING", "").lower() in ("1", "true", "yes"):
-        return {"enable_thinking": False}
-    return {}
-
-
-def _chunk_items(items: list[dict[str, Any]], max_per_chunk: int = 4) -> list[list[dict[str, Any]]]:
-    if not items:
-        return []
-    return [items[i : i + max_per_chunk] for i in range(0, len(items), max_per_chunk)]
+    batch_ids: list[str] = []
+    batch_texts: list[str] = []
+    cur_chars = 0
+    for w in items:
+        oid = (w.get("openalex_id") or "").strip()
+        if not oid:
+            continue
+        t = (w.get(field) or "").strip()
+        if len(t) > 5000:
+            t = t[:5000]
+        if batch_texts and (
+            len(batch_texts) >= 16 or cur_chars + len(t) > 5000
+        ):
+            yield batch_ids, batch_texts
+            batch_ids, batch_texts = [], []
+            cur_chars = 0
+        batch_ids.append(oid)
+        batch_texts.append(t)
+        cur_chars += len(t)
+    if batch_texts:
+        yield batch_ids, batch_texts
 
 
 def translate_works_to_zh(settings: Settings, works: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
@@ -70,58 +79,35 @@ def translate_works_to_zh(settings: Settings, works: list[dict[str, Any]]) -> di
     if not to_translate:
         return out
 
-    model = settings.qwen_translate_model
+    ak = (settings.volc_access_key_id or "").strip()
+    sk = (settings.volc_secret_access_key or "").strip()
+    if not ak or not sk:
+        raise VolcTranslateNotConfiguredError()
 
-    for chunk in _chunk_items(to_translate, max_per_chunk=4):
-        user_lines = []
-        for i, item in enumerate(chunk, 1):
-            user_lines.append(
-                f"【{i}】openalex_id: {item['openalex_id']}\n"
-                f"title: {item['title']}\n"
-                f"abstract: {item['abstract']}"
-            )
-        user_prompt = (
-            "请将下列每条文献的 title、abstract 译为简体中文。保持学术语气，专有名词可保留英文。\n"
-            "输出一个 JSON 数组，元素字段：openalex_id（字符串）、title_zh、abstract_zh（无摘要则 abstract_zh 为空字符串）。\n"
-            "除 JSON 外不要输出任何文字。\n\n"
-            + "\n\n".join(user_lines)
-        )
-        try:
-            text = chat_completion(
-                settings,
-                model,
-                TRANSLATE_SYSTEM_PROMPT,
-                user_prompt,
-                temperature=0.15,
-                timeout=90.0,
-                extra_body=_translate_extra_body(),
-            )
-            parsed = parse_json_strict(text)
-            if isinstance(parsed, list):
-                rows = parsed
-            else:
-                rows = (
-                    parsed.get("items")
-                    or parsed.get("translations")
-                    or parsed.get("results")
-                    or []
-                )
-            if not isinstance(rows, list):
-                raise ValueError("模型返回非数组")
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                oid = (row.get("openalex_id") or "").strip()
-                if not oid:
-                    continue
-                tz = (row.get("title_zh") or "").strip()
-                az = (row.get("abstract_zh") or "").strip()
-                if tz or az:
-                    out[oid] = {"title_zh": tz, "abstract_zh": az}
-        except Exception as e:
-            logger.warning("文献批量翻译失败（本批 %d 条）: %s", len(chunk), e)
+    try:
+        for batch_ids, batch_texts in _iter_text_batches(to_translate, "title"):
+            zh_list = translate_text_list(ak, sk, batch_texts, target_language="zh")
+            for oid, zh in zip(batch_ids, zh_list):
+                if oid not in out:
+                    out[oid] = {"title_zh": "", "abstract_zh": ""}
+                out[oid]["title_zh"] = zh
 
-    return out
+        for batch_ids, batch_texts in _iter_text_batches(to_translate, "abstract"):
+            zh_list = translate_text_list(ak, sk, batch_texts, target_language="zh")
+            for oid, zh in zip(batch_ids, zh_list):
+                if oid not in out:
+                    out[oid] = {"title_zh": "", "abstract_zh": ""}
+                out[oid]["abstract_zh"] = zh
+    except Exception as e:
+        logger.warning("火山翻译失败: %s", e)
+        raise
+
+    # 去掉全无内容的条目
+    return {
+        k: v
+        for k, v in out.items()
+        if (v.get("title_zh") or "").strip() or (v.get("abstract_zh") or "").strip()
+    }
 
 
 def apply_zh_fields(works: list[dict[str, Any]], zh_map: dict[str, dict[str, str]]) -> None:

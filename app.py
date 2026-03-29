@@ -6,6 +6,7 @@ Web 服务入口：Flask 提供前端页面与 API。
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -17,7 +18,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 load_dotenv(_PROJECT_ROOT / ".env")
 load_dotenv()
 
-from literature_review.config import load_settings
+from literature_review.config import (
+    QwenNotConfiguredError,
+    VolcTranslateNotConfiguredError,
+    ensure_qwen_configured,
+    load_settings,
+)
 from literature_review.pipeline import (
     resolve_research_title,
     run_intent_step,
@@ -28,6 +34,9 @@ from literature_review.translate import translate_works_to_zh
 
 app = Flask(__name__, static_folder="static")
 PROJECT_ROOT = _PROJECT_ROOT
+logger = logging.getLogger("literature-review")
+if not logging.root.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 # 会话签名：生产环境请设置 FLASK_SECRET_KEY（可与 BETA_ACCESS_TOKEN 不同）
 app.secret_key = (
@@ -153,6 +162,7 @@ def api_search():
 
     try:
         settings = load_settings()
+        ensure_qwen_configured(settings)
         intent = run_intent_step(settings, description)
         research_topic = resolve_research_title(intent, data.get("title"))
         result = select_top_en_only(settings, intent, return_candidates=15)
@@ -163,13 +173,17 @@ def api_search():
             "works": [_serialize_work(w) for w in works],
             "candidates": [_serialize_work(w) for w in candidates],
         })
+    except QwenNotConfiguredError as e:
+        logger.warning("POST /api/search：%s\n%s", e.short_message, e.detail)
+        return jsonify({"error": e.short_message}), 400
     except Exception as e:
+        logger.exception("POST /api/search 失败")
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/translate", methods=["POST"])
 def api_translate():
-    """异步翻译：检索返回后再调用，不阻塞 /api/search。"""
+    """文献标题/摘要译为中文：由前端「一键翻译」调用（火山引擎 TranslateText）。"""
     denied = _require_beta_access()
     if denied is not None:
         return denied
@@ -194,7 +208,11 @@ def api_translate():
         settings = load_settings()
         zh_map = translate_works_to_zh(settings, unique)
         return jsonify({"translations": zh_map})
+    except VolcTranslateNotConfiguredError as e:
+        logger.warning("POST /api/translate：%s\n%s", e.short_message, e.detail)
+        return jsonify({"error": e.short_message}), 400
     except Exception as e:
+        logger.exception("POST /api/translate 失败")
         return jsonify({"error": str(e)}), 500
 
 
@@ -215,9 +233,14 @@ def api_generate():
     works = [_deserialize_work(w) for w in raw_works]
     try:
         settings = load_settings()
+        ensure_qwen_configured(settings)
         review_text = run_writing_step(settings, research_title, works)
         return jsonify({"review_text": review_text})
+    except QwenNotConfiguredError as e:
+        logger.warning("POST /api/generate：%s\n%s", e.short_message, e.detail)
+        return jsonify({"error": e.short_message}), 400
     except Exception as e:
+        logger.exception("POST /api/generate 失败")
         return jsonify({"error": str(e)}), 500
 
 

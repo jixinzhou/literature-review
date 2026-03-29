@@ -287,9 +287,10 @@
     <section id="step2" class="card hidden">
       <p class="step-indicator">步骤 2 / 2 — 确认文献</p>
       <div class="lang-row" id="langRow">
+        <button type="button" id="btnTranslateZh" class="btn btn-secondary btn-sm">一键翻译中文</button>
         <button type="button" id="btnLangToggle" class="btn btn-secondary btn-sm">显示原文</button>
-        <span class="hint">默认显示中文译文；撰写综述仍使用英文原文以保证引用一致</span>
-        <span id="translateHint" class="hint hidden">正在翻译中文译文…</span>
+        <span class="hint">点击「一键翻译」将标题与摘要译为中文（火山引擎）；撰写综述仍使用英文原文以保证引用一致</span>
+        <span id="translateHint" class="hint hidden">正在翻译…</span>
       </div>
       <div id="topicBadge" class="topic-badge hidden"></div>
       <div class="step2-layout">
@@ -480,9 +481,12 @@
       return div.innerHTML;
     }
 
-    async function fetchTranslationsBackground() {
+    async function runTranslateZh() {
+      setError('err2', '');
       const hint = document.getElementById('translateHint');
+      const btn = document.getElementById('btnTranslateZh');
       if (hint) hint.classList.remove('hidden');
+      if (btn) btn.disabled = true;
       try {
         const res = await fetch(`${API}/translate`, {
           method: 'POST',
@@ -504,12 +508,16 @@
         }
         applyZh(works);
         applyZh(candidates);
+        showZh = true;
+        const langBtn = document.getElementById('btnLangToggle');
+        if (langBtn) langBtn.textContent = '显示原文';
         refreshStep2();
         if (document.getElementById('drawerOverlay').classList.contains('open')) refreshDrawer();
       } catch (e) {
-        console.warn(e);
+        setError('err2', e.message || String(e));
       } finally {
         if (hint) hint.classList.add('hidden');
+        if (btn) btn.disabled = false;
       }
     }
 
@@ -545,7 +553,6 @@
         refreshStep2();
         document.getElementById('btnAddMore').classList.toggle('hidden', candidates.length === 0);
         show('step2');
-        void fetchTranslationsBackground();
       } catch (e) {
         setError('err1', e.message);
       } finally {
@@ -581,6 +588,7 @@
       }
     }
 
+    document.getElementById('btnTranslateZh').addEventListener('click', runTranslateZh);
     document.getElementById('btnSearch').addEventListener('click', search);
     document.getElementById('btnGenerate').addEventListener('click', generate);
     document.getElementById('btnAddMore').addEventListener('click', openDrawer);
